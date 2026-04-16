@@ -39,15 +39,14 @@ return [
 
     'guards' => [
         'web' => [
-            'driver' => 'session',
+            'driver'   => 'session',
             'provider' => 'users',
         ],
 
         'api' => [
-        'driver' => 'token',           // or 'sanctum' / 'passport' if you're using those
-        'provider' => 'users',
-        'hash' => false,
-    ],
+            'driver'   => 'sanctum',  // ← must be sanctum, NOT 'token'
+            'provider' => 'users',
+        ],
     ],
 
     /*
