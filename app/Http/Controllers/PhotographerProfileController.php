@@ -105,34 +105,50 @@ class PhotographerProfileController extends Controller
     public function updateProfile(Request $request)
     {
         $user = $this->requirePhotographer();
-
+    
         $validated = $request->validate([
-            'age'           => 'sometimes|integer|min:18',
+            'age'           => 'sometimes|integer|min:18|max:100',
             'gender'        => 'sometimes|in:male,female,other',
             'location'      => 'sometimes|string|max:255',
             'bio'           => 'sometimes|string|max:2000',
             'hourly_rate'   => 'sometimes|numeric|min:0',
             'service_rates' => 'sometimes|array',
-            'profile_photo' => 'sometimes|image|mimes:jpeg,png,jpg|max:4096',
+            'profile_photo' => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:4096',
         ]);
-
-   if ($request->hasFile('profile_photo')) {
-        $profile = $user->photographerProfile;
-        if ($profile && $profile->profile_photo) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($profile->profile_photo);
+    
+        if ($request->hasFile('profile_photo')) {
+            // Delete the old photo file if one exists
+            $existing = $user->photographerProfile?->profile_photo;
+            if ($existing) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($existing);
+            }
+    
+            // Store new photo and save the RELATIVE PATH (e.g. "profiles/abc.jpg")
+            // NOT the full URL — we build the URL on the frontend
+            $validated['profile_photo'] = $request->file('profile_photo')
+                ->store('profiles', 'public');
         }
-        $validated['profile_photo'] = $request->file('profile_photo')
-            ->store('profiles', 'public');
-    }
-
+    
+        // Allow clearing string fields (bio, location, gender) by sending empty string
+        foreach (['bio', 'location', 'gender'] as $field) {
+            if ($request->has($field)) {
+                $validated[$field] = $request->input($field) ?: null;
+            }
+        }
+    
         $user->photographerProfile()->updateOrCreate(
             ['user_id' => $user->id],
             $validated
         );
-
+    
+        // Return fresh user WITH the photographer_profile relationship loaded
+        // so the Vue frontend can update its store in one round-trip
+        $freshUser = $user->fresh()->load(['role', 'photographerProfile']);
+    
         return response()->json([
             'message' => 'Profile updated successfully.',
-            'user' => $user->fresh()->load(['role', 'photographerProfile']),
+            'user'    => $freshUser,
+            'profile' => $freshUser->photographerProfile,
         ]);
     }
 
