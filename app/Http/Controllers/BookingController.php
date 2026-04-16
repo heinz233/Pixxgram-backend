@@ -73,38 +73,38 @@ class BookingController extends Controller
     // ─────────────────────────────────────────────────────────────────
     // GET /api/bookings  — list bookings for the authenticated user
     // ─────────────────────────────────────────────────────────────────
-    public function getBookings()
-    {
-        $user = Auth::user()->load('role');
+   public function getBookings()
+{
+    /** @var \App\Models\User $user */
+    $user = Auth::user();
+    $user->loadMissing('role');
 
-        // Use role_id directly — more reliable than isClient() when role isn't pre-loaded
-        if ($user->role_id === 3) {
-            // Client: show bookings they made
-            $bookings = Booking::where('client_id', $user->id)
-                ->with(['photographer:id,name,user_image,phoneNumber'])
-                ->orderBy('booking_date', 'desc')
-                ->get();
-        } elseif ($user->role_id === 2) {
-            // Photographer: show bookings made for them
-            $bookings = Booking::where('photographer_id', $user->id)
-                ->with(['client:id,name,user_image,phoneNumber'])
-                ->orderBy('booking_date', 'desc')
-                ->get();
-        } else {
-            // Admin: all bookings
-            $bookings = Booking::with([
-                    'client:id,name,user_image',
-                    'photographer:id,name,user_image',
-                ])
-                ->orderBy('booking_date', 'desc')
-                ->paginate(50);
-
-            return response()->json($bookings);
-        }
+    if ($user->role_id === 3) {
+        // Client
+        $bookings = Booking::where('client_id', $user->id)
+            ->with(['photographer:id,name,user_image,phoneNumber'])
+            ->orderBy('booking_date', 'desc')
+            ->get();
+    } elseif ($user->role_id === 2) {
+        // Photographer
+        $bookings = Booking::where('photographer_id', $user->id)
+            ->with(['client:id,name,user_image,phoneNumber'])
+            ->orderBy('booking_date', 'desc')
+            ->get();
+    } else {
+        // Admin
+        $bookings = Booking::with([
+                'client:id,name,user_image',
+                'photographer:id,name,user_image',
+            ])
+            ->orderBy('booking_date', 'desc')
+            ->paginate(50);
 
         return response()->json($bookings);
     }
 
+    return response()->json($bookings);
+}
     // ─────────────────────────────────────────────────────────────────
     // PATCH /api/bookings/{id}/status
     // ─────────────────────────────────────────────────────────────────
