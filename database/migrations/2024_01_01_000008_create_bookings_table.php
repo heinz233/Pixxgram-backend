@@ -10,12 +10,33 @@ return new class extends Migration
     {
         Schema::create('bookings', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('client_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('photographer_id')->constrained('users')->cascadeOnDelete();
+
+            // The client who made the booking
+            $table->foreignId('client_id')
+                ->constrained('users')
+                ->cascadeOnDelete();
+
+            // The photographer being booked
+            $table->foreignId('photographer_id')
+                ->constrained('users')
+                ->cascadeOnDelete();
+
+            // When the session is scheduled
             $table->timestamp('booking_date');
-            $table->string('status')->default('pending'); // pending | confirmed | completed | cancelled
+
+            // pending | confirmed | completed | cancelled
+            $table->string('status', 20)->default('pending');
+
+            // Optional notes from the client
             $table->text('notes')->nullable();
+
             $table->timestamps();
+
+            // Indexes for fast lookups
+            $table->index('client_id');
+            $table->index('photographer_id');
+            $table->index('status');
+            $table->index('booking_date');
         });
     }
 

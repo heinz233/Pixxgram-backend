@@ -15,39 +15,45 @@ class BookingController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // POST /api/bookings  — client creates a booking
+    // POST /api/bookings
+    // Client creates a booking request for a photographer
     // ─────────────────────────────────────────────────────────────────
     public function store(Request $request)
     {
         $request->validate([
             'photographer_id' => 'required|integer|exists:users,id',
-            // Use after:now with 1-hour buffer to avoid timezone issues
             'booking_date'    => 'required|date|after:+1 hour',
             'notes'           => 'nullable|string|max:1000',
         ]);
 
-        $clientId       = Auth::id();
+        /** @var \App\Models\User $authUser */
+        $authUser       = Auth::user();
+        $clientId       = $authUser->id;
         $photographerId = (int) $request->photographer_id;
 
-        // Cannot book yourself
+        // Prevent booking yourself
         if ($clientId === $photographerId) {
-            return response()->json(['message' => 'You cannot book yourself.'], 422);
+            return response()->json([
+                'message' => 'You cannot book yourself.',
+            ], 422);
         }
 
-        // Make sure the person being booked is actually a photographer
+        // Ensure the target user is actually a photographer (role_id = 2)
         $photographer = User::find($photographerId);
-        if (!$photographer || !$photographer->isPhotographer()) {
-            return response()->json(['message' => 'The selected user is not a photographer.'], 422);
+        if (!$photographer || $photographer->role_id !== 2) {
+            return response()->json([
+                'message' => 'The selected user is not a photographer.',
+            ], 422);
         }
 
-        // Prevent duplicate pending bookings for the same photographer on the same day
-        $sameDay = Booking::where('client_id', $clientId)
+        // Prevent duplicate pending bookings on the same day
+        $duplicate = Booking::where('client_id', $clientId)
             ->where('photographer_id', $photographerId)
             ->where('status', 'pending')
             ->whereDate('booking_date', date('Y-m-d', strtotime($request->booking_date)))
             ->exists();
 
-        if ($sameDay) {
+        if ($duplicate) {
             return response()->json([
                 'message' => 'You already have a pending booking with this photographer on that day.',
             ], 409);
@@ -57,42 +63,54 @@ class BookingController extends Controller
             'client_id'       => $clientId,
             'photographer_id' => $photographerId,
             'booking_date'    => $request->booking_date,
-            'notes'           => $request->notes,
+            'notes'           => $request->notes ?? null,
             'status'          => 'pending',
         ]);
 
+        $booking->load([
+            'client:id,name,user_image,phoneNumber',
+            'photographer:id,name,user_image,phoneNumber',
+        ]);
+
         return response()->json([
-            'message' => 'Booking created successfully.',
-            'booking' => $booking->load([
-                'photographer:id,name,user_image',
-                'client:id,name,user_image',
-            ]),
+            'message' => 'Booking request sent successfully.',
+            'booking' => $booking,
         ], 201);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // GET /api/bookings  — list bookings for the authenticated user
+    // GET /api/bookings
+    // Returns bookings for the authenticated user (role-aware)
     // ─────────────────────────────────────────────────────────────────
-   public function getBookings()
-{
-    /** @var \App\Models\User $user */
-    $user = Auth::user();
-    $user->loadMissing('role');
+    public function getBookings()
+    {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
 
-    if ($user->role_id === 3) {
-        // Client
-        $bookings = Booking::where('client_id', $user->id)
-            ->with(['photographer:id,name,user_image,phoneNumber'])
-            ->orderBy('booking_date', 'desc')
-            ->get();
-    } elseif ($user->role_id === 2) {
-        // Photographer
-        $bookings = Booking::where('photographer_id', $user->id)
-            ->with(['client:id,name,user_image,phoneNumber'])
-            ->orderBy('booking_date', 'desc')
-            ->get();
-    } else {
-        // Admin
+        // Client (role_id = 3) — bookings they created
+        if ($user->role_id === 3) {
+            $bookings = Booking::where('client_id', $user->id)
+                ->with([
+                    'photographer:id,name,user_image,phoneNumber',
+                    'photographer.photographerProfile:user_id,location,hourly_rate,average_rating',
+                ])
+                ->orderBy('booking_date', 'desc')
+                ->get();
+
+            return response()->json($bookings);
+        }
+
+        // Photographer (role_id = 2) — bookings made for them
+        if ($user->role_id === 2) {
+            $bookings = Booking::where('photographer_id', $user->id)
+                ->with(['client:id,name,user_image,phoneNumber'])
+                ->orderBy('booking_date', 'desc')
+                ->get();
+
+            return response()->json($bookings);
+        }
+
+        // Admin (role_id = 1) — all bookings paginated
         $bookings = Booking::with([
                 'client:id,name,user_image',
                 'photographer:id,name,user_image',
@@ -103,10 +121,31 @@ class BookingController extends Controller
         return response()->json($bookings);
     }
 
-    return response()->json($bookings);
-}
+    // ─────────────────────────────────────────────────────────────────
+    // GET /api/bookings/{id}
+    // Single booking — must belong to the auth user
+    // ─────────────────────────────────────────────────────────────────
+    public function show($id)
+    {
+        $booking = Booking::with([
+            'client:id,name,user_image,phoneNumber',
+            'photographer:id,name,user_image,phoneNumber',
+            'photographer.photographerProfile:user_id,location,hourly_rate,bio',
+        ])->findOrFail($id);
+
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+
+        if ($booking->client_id !== $user->id && $booking->photographer_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized.'], 403);
+        }
+
+        return response()->json($booking);
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // PATCH /api/bookings/{id}/status
+    // Update booking status with role-based rules
     // ─────────────────────────────────────────────────────────────────
     public function updateStatus(Request $request, $id)
     {
@@ -115,49 +154,56 @@ class BookingController extends Controller
         ]);
 
         $booking = Booking::findOrFail($id);
-        $userId  = Auth::id();
 
-        // Only the client or photographer on this booking can update it
+        /** @var \App\Models\User $user */
+        $user   = Auth::user();
+        $userId = $user->id;
+
+        // Must be the client or photographer on this booking
         if ($booking->client_id !== $userId && $booking->photographer_id !== $userId) {
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        // Business rules:
-        // - Client can only cancel a pending booking
-        // - Photographer can confirm, complete, or cancel
-        if ($booking->client_id === $userId && $request->status !== 'cancelled') {
-            return response()->json([
-                'message' => 'Clients can only cancel bookings.',
-            ], 422);
+        $newStatus = $request->status;
+
+        // Client rules: can only cancel, and only if still pending
+        if ($booking->client_id === $userId) {
+            if ($newStatus !== 'cancelled') {
+                return response()->json([
+                    'message' => 'Clients can only cancel bookings.',
+                ], 422);
+            }
+            if ($booking->status !== 'pending') {
+                return response()->json([
+                    'message' => 'You can only cancel a pending booking.',
+                ], 422);
+            }
         }
 
-        $booking->update(['status' => $request->status]);
+        // Photographer rules
+        if ($booking->photographer_id === $userId) {
+            if ($booking->status === 'cancelled') {
+                return response()->json([
+                    'message' => 'Cannot update a cancelled booking.',
+                ], 422);
+            }
+            if ($newStatus === 'completed' && $booking->status !== 'confirmed') {
+                return response()->json([
+                    'message' => 'Booking must be confirmed before marking as completed.',
+                ], 422);
+            }
+        }
+
+        $booking->update(['status' => $newStatus]);
+
+        $booking->load([
+            'client:id,name,user_image',
+            'photographer:id,name,user_image',
+        ]);
 
         return response()->json([
-            'message' => 'Booking status updated.',
-            'booking' => $booking->load([
-                'client:id,name,user_image',
-                'photographer:id,name,user_image',
-            ]),
+            'message' => 'Booking ' . $newStatus . '.',
+            'booking' => $booking,
         ]);
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // GET /api/bookings/{id}
-    // ─────────────────────────────────────────────────────────────────
-    public function show($id)
-    {
-        $booking = Booking::with([
-            'client:id,name,user_image,phoneNumber',
-            'photographer:id,name,user_image,phoneNumber',
-        ])->findOrFail($id);
-
-        $userId = Auth::id();
-
-        if ($booking->client_id !== $userId && $booking->photographer_id !== $userId) {
-            return response()->json(['message' => 'Unauthorized.'], 403);
-        }
-
-        return response()->json($booking);
     }
 }
