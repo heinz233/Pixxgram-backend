@@ -22,7 +22,7 @@ class DatabaseSeeder extends Seeder
         // ── Admin account ──────────────────────────────────────────────
         User::create([
             'name'              => 'Admin',
-            'email'             => '233ateng@gmail.com',
+            'email'             => 'ateng.heinz@gmail.com',
             'phoneNumber'       => '0781544283',
             'role_id'           => $admin->id,
             'password'          => Hash::make('Qwerty1234'),
@@ -34,7 +34,7 @@ class DatabaseSeeder extends Seeder
         // ── Photographer account ───────────────────────────────────────
         $photographer_user = User::create([
             'name'              => 'Heinz Ateng',
-            'email'             => 'ateng.heinz@gmail.com',
+            'email'             => '233ateng@gmail.com',
             'phoneNumber'       => '0701585836',
             'role_id'           => $photographer->id,
             'password'          => Hash::make('Qwerty1234'),
