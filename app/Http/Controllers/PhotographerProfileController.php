@@ -75,10 +75,15 @@ class PhotographerProfileController extends Controller
 
     // PUT /api/photographer/profile  (photographer only)
     // POST /api/photographer/profile  (for multipart FormData support)
-    public function updateProfile(Request $request)
+        public function updateProfile(Request $request)
     {
-        $user = $this->requirePhotographer();
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
 
+        if (!$user || $user->role_id !== 2) {
+            return response()->json(['message' => 'Only photographers can update this profile.'], 403);
+        }
+    
         $request->validate([
             'age'           => 'sometimes|integer|min:18|max:100',
             'gender'        => 'sometimes|in:male,female,other',
@@ -87,25 +92,42 @@ class PhotographerProfileController extends Controller
             'hourly_rate'   => 'sometimes|numeric|min:0',
             'profile_photo' => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:4096',
         ]);
-
-        $data = $request->only(['age', 'gender', 'location', 'bio', 'hourly_rate']);
-
+    
+        $data = [];
+    
+        // Collect fields — allow empty string to clear a value
         foreach (['bio', 'location', 'gender'] as $field) {
             if ($request->has($field)) {
                 $data[$field] = $request->input($field) ?: null;
             }
         }
-
-        if ($request->hasFile('profile_photo')) {
-            $existing = $user->photographerProfile?->profile_photo;
-            if ($existing) Storage::disk('public')->delete($existing);
-            $data['profile_photo'] = $request->file('profile_photo')->store('profiles', 'public');
+        foreach (['age', 'hourly_rate'] as $field) {
+            if ($request->filled($field)) {
+                $data[$field] = $request->input($field);
+            }
         }
-
-        $user->photographerProfile()->updateOrCreate(['user_id' => $user->id], $data);
-
+    
+        // Handle photo upload
+        if ($request->hasFile('profile_photo')) {
+            $profile = $user->photographerProfile;
+            if ($profile && $profile->profile_photo) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($profile->profile_photo);
+            }
+            // Store relative path — frontend prepends /storage/ for display
+            $data['profile_photo'] = $request->file('profile_photo')
+                ->store('profiles', 'public');
+        }
+    
+        // Save to database
+        $user->photographerProfile()->updateOrCreate(
+            ['user_id' => $user->id],
+            $data
+        );
+    
+        // Return fresh user with photographer_profile so frontend
+        // can update its store without a second API call
         $freshUser = $user->fresh()->load(['role', 'photographerProfile']);
-
+    
         return response()->json([
             'message' => 'Profile updated successfully.',
             'user'    => $freshUser,
