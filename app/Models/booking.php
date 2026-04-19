@@ -9,10 +9,6 @@ class Booking extends Model
 {
     use HasFactory;
 
-    // ─────────────────────────────────────────────────────────────────
-    // Table & fillable
-    // ─────────────────────────────────────────────────────────────────
-
     protected $table = 'bookings';
 
     protected $fillable = [
@@ -21,16 +17,21 @@ class Booking extends Model
         'booking_date',
         'status',
         'notes',
+        // Payment fields
+        'amount',
+        'payment_status',
+        'mpesa_checkout_request_id',
+        'mpesa_receipt',
+        'paid_at',
     ];
 
     protected $casts = [
         'booking_date' => 'datetime',
+        'paid_at'      => 'datetime',
+        'amount'       => 'decimal:2',
     ];
 
-    // ─────────────────────────────────────────────────────────────────
-    // Status constants — prevents typos across the codebase
-    // ─────────────────────────────────────────────────────────────────
-
+    // ── Status constants ───────────────────────────────────────────
     const STATUS_PENDING   = 'pending';
     const STATUS_CONFIRMED = 'confirmed';
     const STATUS_COMPLETED = 'completed';
@@ -43,103 +44,39 @@ class Booking extends Model
         self::STATUS_CANCELLED,
     ];
 
-    // ─────────────────────────────────────────────────────────────────
-    // Relationships
-    // ─────────────────────────────────────────────────────────────────
+    // ── Payment status constants ───────────────────────────────────
+    const PAYMENT_UNPAID          = 'unpaid';
+    const PAYMENT_PENDING_PAYMENT = 'pending_payment';
+    const PAYMENT_PAID            = 'paid';
 
-    /**
-     * The client who made the booking.
-     */
+    // ── Relationships ──────────────────────────────────────────────
     public function client()
     {
         return $this->belongsTo(User::class, 'client_id');
     }
 
-    /**
-     * The photographer being booked.
-     */
     public function photographer()
     {
         return $this->belongsTo(User::class, 'photographer_id');
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Query scopes
-    // ─────────────────────────────────────────────────────────────────
+    // ── Scopes ─────────────────────────────────────────────────────
+    public function scopePending($query)   { return $query->where('status', self::STATUS_PENDING); }
+    public function scopeConfirmed($query) { return $query->where('status', self::STATUS_CONFIRMED); }
+    public function scopeCompleted($query) { return $query->where('status', self::STATUS_COMPLETED); }
+    public function scopeCancelled($query) { return $query->where('status', self::STATUS_CANCELLED); }
+    public function scopePaid($query)      { return $query->where('payment_status', self::PAYMENT_PAID); }
+    public function scopeUnpaid($query)    { return $query->where('payment_status', self::PAYMENT_UNPAID); }
 
-    /** Bookings with a specific status */
-    public function scopeStatus($query, string $status)
+    // ── Helpers ────────────────────────────────────────────────────
+    public function isPending(): bool   { return $this->status === self::STATUS_PENDING; }
+    public function isConfirmed(): bool { return $this->status === self::STATUS_CONFIRMED; }
+    public function isCompleted(): bool { return $this->status === self::STATUS_COMPLETED; }
+    public function isCancelled(): bool { return $this->status === self::STATUS_CANCELLED; }
+    public function isPaid(): bool      { return $this->payment_status === self::PAYMENT_PAID; }
+    public function needsPayment(): bool
     {
-        return $query->where('status', $status);
-    }
-
-    /** Only pending bookings */
-    public function scopePending($query)
-    {
-        return $query->where('status', self::STATUS_PENDING);
-    }
-
-    /** Only confirmed bookings */
-    public function scopeConfirmed($query)
-    {
-        return $query->where('status', self::STATUS_CONFIRMED);
-    }
-
-    /** Only completed bookings */
-    public function scopeCompleted($query)
-    {
-        return $query->where('status', self::STATUS_COMPLETED);
-    }
-
-    /** Only cancelled bookings */
-    public function scopeCancelled($query)
-    {
-        return $query->where('status', self::STATUS_CANCELLED);
-    }
-
-    /** Upcoming bookings (booking_date in the future) */
-    public function scopeUpcoming($query)
-    {
-        return $query->where('booking_date', '>', now());
-    }
-
-    /** Past bookings */
-    public function scopePast($query)
-    {
-        return $query->where('booking_date', '<=', now());
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Helpers / Accessors
-    // ─────────────────────────────────────────────────────────────────
-
-    /** Whether this booking is still pending */
-    public function isPending(): bool
-    {
-        return $this->status === self::STATUS_PENDING;
-    }
-
-    /** Whether this booking has been confirmed */
-    public function isConfirmed(): bool
-    {
-        return $this->status === self::STATUS_CONFIRMED;
-    }
-
-    /** Whether this booking has been completed */
-    public function isCompleted(): bool
-    {
-        return $this->status === self::STATUS_COMPLETED;
-    }
-
-    /** Whether this booking has been cancelled */
-    public function isCancelled(): bool
-    {
-        return $this->status === self::STATUS_CANCELLED;
-    }
-
-    /** Whether the booking date is in the future */
-    public function isUpcoming(): bool
-    {
-        return $this->booking_date?->isFuture() ?? false;
+        return $this->status === self::STATUS_CONFIRMED
+            && $this->payment_status !== self::PAYMENT_PAID;
     }
 }

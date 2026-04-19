@@ -55,7 +55,7 @@ class MpesaService
                     'PartyA'            => $phone,
                     'PartyB'            => $this->businessShortCode,
                     'PhoneNumber'       => $phone,
-                    'CallBackURL'       => route('subscriptions.mpesa.callback'),
+                    'CallBackURL'       => config('services.mpesa.callback_url'),
                     'AccountReference'  => $reference,
                     'TransactionDesc'   => $description,
                 ]);
