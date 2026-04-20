@@ -3,24 +3,35 @@
 namespace App\Services;
 
 use App\Models\Subscription;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
 class SubscriptionService
 {
-    // -----------------------------------------------------------------
-    // Available plans (amount in KES)
-    // -----------------------------------------------------------------
-
+    // ─────────────────────────────────────────────────────────────────
+    // Plans available on the platform (amount in KES)
+    // ─────────────────────────────────────────────────────────────────
     public const PLANS = [
-        'monthly'   => ['label' => 'Monthly',   'amount' => 1500,  'days' => 30],
-        'quarterly' => ['label' => 'Quarterly',  'amount' => 3999,  'days' => 90],
-        'annual'    => ['label' => 'Annual',     'amount' => 14000, 'days' => 365],
+        'monthly' => [
+            'label'  => 'Monthly',
+            'amount' => 500,
+            'days'   => 30,
+        ],
+        'quarterly' => [
+            'label'  => 'Quarterly',
+            'amount' => 1800,
+            'days'   => 90,
+        ],
+        'annual' => [
+            'label'  => 'Annual',
+            'amount' => 5000,
+            'days'   => 365,
+        ],
     ];
 
-    // -----------------------------------------------------------------
-    // Create a pending subscription record before payment
-    // -----------------------------------------------------------------
-
+    // ─────────────────────────────────────────────────────────────────
+    // Create a pending subscription record before payment is confirmed
+    // ─────────────────────────────────────────────────────────────────
     public function createPending(int $photographerId, string $plan, string $paymentMethod): Subscription
     {
         $planDetails = self::PLANS[$plan];
@@ -36,48 +47,55 @@ class SubscriptionService
         ]);
     }
 
-    // -----------------------------------------------------------------
-    // Called from M-Pesa callback after successful payment
-    // -----------------------------------------------------------------
-
+    // ─────────────────────────────────────────────────────────────────
+    // Called after M-Pesa callback confirms successful payment
+    // ─────────────────────────────────────────────────────────────────
     public function confirmPayment(string $checkoutRequestId, ?string $mpesaReceipt): bool
     {
         $subscription = Subscription::where('transaction_reference', $checkoutRequestId)->first();
 
         if (!$subscription) {
-            Log::warning('SubscriptionService: subscription not found', [
+            Log::warning('SubscriptionService::confirmPayment — subscription not found', [
                 'checkout_request_id' => $checkoutRequestId,
             ]);
             return false;
         }
 
         $subscription->update([
-            'status'                => 'active',
-            'mpesa_receipt'         => $mpesaReceipt,
-            'transaction_reference' => $checkoutRequestId,
+            'status'        => 'active',
+            'mpesa_receipt' => $mpesaReceipt,
         ]);
 
-        // Activate photographer account
+        // Activate the photographer account
         $photographer = $subscription->photographer;
 
         if ($photographer) {
-            $photographer->update(['status' => 'active', 'is_active' => true]);
-
-            $photographer->photographerProfile()->update([
-                'subscription_status'   => 'active',
-                'subscription_end_date' => $subscription->ends_at,
+            $photographer->update([
+                'status'    => 'active',
+                'is_active' => true,
             ]);
+
+            $photographer->photographerProfile()->updateOrCreate(
+                ['user_id' => $photographer->id],
+                [
+                    'subscription_status'   => 'active',
+                    'subscription_end_date' => $subscription->ends_at,
+                ]
+            );
         }
 
-        Log::info('Subscription confirmed', ['subscription_id' => $subscription->id]);
+        Log::info('Subscription confirmed', [
+            'subscription_id' => $subscription->id,
+            'photographer_id' => $subscription->photographer_id,
+            'plan'            => $subscription->plan,
+        ]);
 
         return true;
     }
 
-    // -----------------------------------------------------------------
-    // Cancel an active subscription
-    // -----------------------------------------------------------------
-
+    // ─────────────────────────────────────────────────────────────────
+    // Cancel a subscription
+    // ─────────────────────────────────────────────────────────────────
     public function cancel(Subscription $subscription): void
     {
         $subscription->update([
@@ -85,7 +103,6 @@ class SubscriptionService
             'cancelled_at' => now(),
         ]);
 
-        // Mark photographer profile subscription as cancelled
         $photographer = $subscription->photographer;
         if ($photographer?->photographerProfile) {
             $photographer->photographerProfile()->update([
