@@ -11,6 +11,7 @@ use App\Http\Controllers\RatingController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ResendEmailVerificationController;
 use App\Http\Controllers\VerifyEmailController;
 
@@ -83,6 +84,10 @@ Route::get('/locations',           [LocationController::class, 'index']);
         Route::post('/{id}/cancel',                     [SubscriptionController::class, 'cancel']);
         Route::get('/mpesa/status/{checkoutRequestId}', [SubscriptionController::class, 'mpesaStatus']);
     });
+
+    //Reports
+        Route::post('/photographers/{id}/report', [ReportController::class, 'store']);
+        Route::get('/my-reports', [ReportController::class, 'myReports']);
 
     // ── Profile update (client) ───────────────────────────────────────
         Route::put('/photographer/profile',  [PhotographerProfileController::class, 'updateProfile']);
