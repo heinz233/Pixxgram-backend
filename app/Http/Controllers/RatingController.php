@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Rating;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class RatingController extends Controller
 {
@@ -22,7 +23,7 @@ class RatingController extends Controller
 
         $rating = Rating::updateOrCreate(
             [
-                'client_id'       => auth()->id(),
+                'client_id'       => Auth::id(),
                 'photographer_id' => $photographerId,
             ],
             [

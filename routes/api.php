@@ -60,6 +60,8 @@ Route::get('/locations',           [LocationController::class, 'index']);
     // ── Bookings ─────────────────────────────────────────────────────
         Route::get('/bookings',               [BookingController::class, 'getBookings']);
         Route::get('/bookings/{id}',          [BookingController::class, 'show']);
+        Route::post('/bookings/{id}/pay',           [BookingController::class, 'initiatePayment']);
+        Route::get('/bookings/{id}/payment-status', [BookingController::class, 'paymentStatus']);
         Route::post('/bookings',              [BookingController::class, 'store']);
         Route::patch('/bookings/{id}/status', [BookingController::class, 'updateStatus']);
 
