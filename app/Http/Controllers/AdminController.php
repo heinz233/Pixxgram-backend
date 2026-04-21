@@ -25,20 +25,31 @@ class AdminController extends Controller
     // ─────────────────────────────────────────────────────────────────
     public function getDashboardStats()
     {
+        // Active subscriptions: check photographer_profiles as source of truth
+        // (subscriptions table rows may be pending/cancelled even when profile is active)
+        $activeSubscriptions = \App\Models\PhotographerProfile::where('subscription_status', 'active')
+            ->where('subscription_end_date', '>', now())
+            ->count();
+
+        // Revenue: count ALL subscriptions that had a real payment
+        // (active + any that were paid before being cancelled/expired)
+        $totalRevenue = Subscription::whereIn('status', ['active', 'cancelled', 'expired'])
+            ->where('amount', '>', 0)
+            ->sum('amount');
+
+        $monthlyRevenue = Subscription::whereIn('status', ['active', 'cancelled', 'expired'])
+            ->where('amount', '>', 0)
+            ->whereMonth('created_at', now()->month)
+            ->whereYear('created_at', now()->year)
+            ->sum('amount');
+
         $stats = [
             'total_photographers'  => User::where('role_id', 2)->count(),
-            'active_photographers' => User::where('role_id', 2)
-                ->where('status', 'active')
-                ->whereHas('photographerProfile', fn($q) =>
-                    $q->where('subscription_status', 'active')
-                )->count(),
+            'active_photographers' => $activeSubscriptions,
             'total_clients'        => User::where('role_id', 3)->count(),
             'pending_reports'      => Report::where('status', 'pending')->count(),
-            'total_revenue'        => Subscription::where('status', 'active')->sum('amount'),
-            'monthly_revenue'      => Subscription::where('status', 'active')
-                ->whereMonth('created_at', now()->month)
-                ->whereYear('created_at', now()->year)
-                ->sum('amount'),
+            'total_revenue'        => $totalRevenue,
+            'monthly_revenue'      => $monthlyRevenue,
             'total_bookings'       => Booking::count(),
             'completed_bookings'   => Booking::where('status', 'completed')->count(),
         ];
@@ -200,7 +211,37 @@ class AdminController extends Controller
             ->orderBy('created_at', 'desc')
             ->paginate(50);
 
-        return response()->json($subs);
+        // Augment each subscription with whether photographer profile is active
+        $subs->getCollection()->transform(function ($sub) {
+            $profile = \App\Models\PhotographerProfile::where('user_id', $sub->photographer_id)->first();
+            $sub->profile_subscription_status   = $profile?->subscription_status;
+            $sub->profile_subscription_end_date = $profile?->subscription_end_date;
+            // Mark as effectively active if profile says so, even if subscription row says otherwise
+            $sub->is_effectively_active =
+                $profile?->subscription_status === 'active' &&
+                $profile?->subscription_end_date &&
+                $profile->subscription_end_date > now();
+            return $sub;
+        });
+
+        // Summary stats for the revenue cards
+        $allSubs   = Subscription::whereIn('status', ['active','cancelled','expired'])->where('amount', '>', 0)->get();
+        $now       = now();
+        $activePro = \App\Models\PhotographerProfile::where('subscription_status', 'active')
+            ->where('subscription_end_date', '>', $now)->count();
+
+        return response()->json([
+            'data'           => $subs,
+            'summary' => [
+                'total_revenue'        => $allSubs->sum('amount'),
+                'active_subscriptions' => $activePro,
+                'month_revenue'        => $allSubs
+                    ->filter(fn($s) =>
+                        \Carbon\Carbon::parse($s->created_at)->month === $now->month &&
+                        \Carbon\Carbon::parse($s->created_at)->year  === $now->year
+                    )->sum('amount'),
+            ],
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────
