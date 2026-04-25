@@ -30,9 +30,19 @@ Route::get('/email/verify/{id}/{hash}', [VerifyEmailController::class, 'verify']
     ->middleware(['signed'])
     ->name('verification.verify');
 
-// M-Pesa callback — Safaricom calls this, no auth
-Route::post('/subscriptions/mpesa/callback', [SubscriptionController::class, 'mpesaCallback'])
-    ->name('subscriptions.mpesa.callback');
+    // STK callback (client payment)
+    Route::post('/bookings/mpesa/callback',   [BookingController::class, 'mpesaCallback'])
+        ->name('bookings.mpesa.callback');
+
+    // B2C callbacks (photographer payout)
+    Route::post('/bookings/payout/callback',  [BookingController::class, 'payoutCallback'])
+        ->name('bookings.payout.callback');
+    Route::post('/bookings/payout/timeout',   [BookingController::class, 'payoutTimeout'])
+        ->name('bookings.payout.timeout');
+
+    // M-Pesa callback — Safaricom calls this, no auth
+    Route::post('/subscriptions/mpesa/callback', [SubscriptionController::class, 'mpesaCallback'])
+        ->name('subscriptions.mpesa.callback');
 
 // Public listing
 Route::get('/subscriptions/plans', [SubscriptionController::class, 'plans']);
@@ -59,12 +69,12 @@ Route::get('/locations',           [LocationController::class, 'index']);
         Route::post('/photographers/{id}/rate',   [RatingController::class, 'store']);
 
     // ── Bookings ─────────────────────────────────────────────────────
-        Route::get('/bookings',               [BookingController::class, 'getBookings']);
-        Route::get('/bookings/{id}',          [BookingController::class, 'show']);
-        Route::post('/bookings/{id}/pay',           [BookingController::class, 'initiatePayment']);
-        Route::get('/bookings/{id}/payment-status', [BookingController::class, 'paymentStatus']);
-        Route::post('/bookings',              [BookingController::class, 'store']);
-        Route::patch('/bookings/{id}/status', [BookingController::class, 'updateStatus']);
+        Route::get('/bookings',                    [BookingController::class, 'getBookings']);
+        Route::get('/bookings/{id}',               [BookingController::class, 'show']);
+        Route::post('/bookings',                   [BookingController::class, 'store']);
+        Route::patch('/bookings/{id}/status',      [BookingController::class, 'updateStatus']);
+        Route::post('/bookings/{id}/pay',          [BookingController::class, 'initiatePayment']);
+        Route::get('/bookings/{id}/payment-status',[BookingController::class, 'paymentStatus']);
 
     // ── Messages ─────────────────────────────────────────────────────
         Route::prefix('messages')->group(function () {

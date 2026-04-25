@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class BookingController extends Controller
 {
@@ -16,7 +17,7 @@ class BookingController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // POST /api/bookings — client creates a booking
+    // POST /api/bookings
     // ─────────────────────────────────────────────────────────────────
     public function store(Request $request)
     {
@@ -59,6 +60,7 @@ class BookingController extends Controller
             'notes'           => $request->notes ?? null,
             'status'          => Booking::STATUS_PENDING,
             'payment_status'  => Booking::PAYMENT_UNPAID,
+            'payout_status'   => Booking::PAYOUT_PENDING,
         ]);
 
         $booking->load([
@@ -68,7 +70,7 @@ class BookingController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Booking request sent. The photographer will review and confirm.',
+            'message' => 'Booking request sent.',
             'booking' => $booking,
         ], 201);
     }
@@ -82,7 +84,6 @@ class BookingController extends Controller
         $user = Auth::user();
 
         if ($user->role_id === 3) {
-            // Client
             $bookings = Booking::where('client_id', $user->id)
                 ->with([
                     'photographer:id,name,user_image,phoneNumber',
@@ -91,13 +92,11 @@ class BookingController extends Controller
                 ->orderBy('booking_date', 'desc')
                 ->get();
         } elseif ($user->role_id === 2) {
-            // Photographer
             $bookings = Booking::where('photographer_id', $user->id)
                 ->with(['client:id,name,user_image,phoneNumber'])
                 ->orderBy('booking_date', 'desc')
                 ->get();
         } else {
-            // Admin
             return response()->json(
                 Booking::with(['client:id,name', 'photographer:id,name'])
                     ->orderBy('booking_date', 'desc')
@@ -149,7 +148,7 @@ class BookingController extends Controller
 
         $newStatus = $request->status;
 
-        // Client rules
+        // Client: can only cancel pending bookings
         if ($booking->client_id === $userId) {
             if ($newStatus !== 'cancelled') {
                 return response()->json(['message' => 'Clients can only cancel bookings.'], 422);
@@ -166,26 +165,20 @@ class BookingController extends Controller
             }
             if ($newStatus === 'completed') {
                 if (!$booking->isConfirmed()) {
-                    return response()->json(['message' => 'Booking must be confirmed before completing.'], 422);
+                    return response()->json(['message' => 'Booking must be confirmed first.'], 422);
                 }
-                // Require payment before completing
                 if (!$booking->isPaid()) {
                     return response()->json([
-                        'message' => 'Payment must be received before marking booking as completed.',
+                        'message' => 'Client must pay before the booking can be completed.',
                     ], 422);
                 }
-            }
-            // When confirming, set payment as required
-            if ($newStatus === 'confirmed') {
-                $booking->update([
-                    'status'         => 'confirmed',
-                    'payment_status' => Booking::PAYMENT_UNPAID,
-                ]);
-                $booking->load(['client:id,name,user_image', 'photographer:id,name,user_image']);
+                // Mark complete AND trigger payout automatically
+                $booking->update(['status' => 'completed']);
+                $this->triggerPayout($booking);
+                $booking->load(['client:id,name', 'photographer:id,name']);
                 return response()->json([
-                    'message'          => 'Booking confirmed! The client will be prompted to pay.',
-                    'booking'          => $booking,
-                    'payment_required' => true,
+                    'message' => 'Booking completed! Payout to photographer has been initiated.',
+                    'booking' => $booking,
                 ]);
             }
         }
@@ -200,7 +193,7 @@ class BookingController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // POST /api/bookings/{id}/pay — client initiates M-Pesa payment
+    // POST /api/bookings/{id}/pay — client pays via M-Pesa
     // ─────────────────────────────────────────────────────────────────
     public function initiatePayment(Request $request, $id)
     {
@@ -217,46 +210,49 @@ class BookingController extends Controller
         if ($booking->client_id !== $user->id) {
             return response()->json(['message' => 'Only the client can initiate payment.'], 403);
         }
-
         if (!$booking->isConfirmed()) {
-            return response()->json([
-                'message' => 'The photographer must confirm the booking before payment.',
-            ], 422);
+            return response()->json(['message' => 'Booking must be confirmed before payment.'], 422);
         }
-
         if ($booking->isPaid()) {
-            return response()->json(['message' => 'This booking has already been paid.'], 409);
+            return response()->json(['message' => 'This booking is already paid.'], 409);
         }
 
-        $amount = (int) $request->amount;
+        $totalAmount = (int) $request->amount;
 
         $stkResult = $this->mpesaService->stkPush(
             phone:       $request->phone,
-            amount:      $amount,
+            amount:      $totalAmount,
             reference:   'PIXXGRAM-BK-' . $booking->id,
             description: 'Pixxgram Booking Payment',
         );
 
         if (!$stkResult['success']) {
-            return response()->json([
-                'message' => $stkResult['message'] ?? 'M-Pesa payment failed to initiate.',
-            ], 422);
+            return response()->json(['message' => $stkResult['message']], 422);
         }
 
         $booking->update([
-            'amount'                    => $amount,
+            'amount'                    => $totalAmount,
             'payment_status'            => Booking::PAYMENT_PENDING_PAYMENT,
             'mpesa_checkout_request_id' => $stkResult['checkout_request_id'],
         ]);
 
+        // Pre-calculate what the split will be
+        $commission = round($totalAmount * Booking::COMMISSION_RATE, 2);
+        $payout     = round($totalAmount - $commission, 2);
+
         return response()->json([
-            'message'             => 'M-Pesa prompt sent. Enter your PIN to complete payment.',
-            'checkout_request_id' => $stkResult['checkout_request_id'],
+            'message'              => 'M-Pesa prompt sent. Enter your PIN to complete payment.',
+            'checkout_request_id'  => $stkResult['checkout_request_id'],
+            'amount_breakdown' => [
+                'total'               => $totalAmount,
+                'platform_commission' => $commission,  // 10%
+                'photographer_payout' => $payout,      // 90%
+            ],
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // GET /api/bookings/{id}/payment-status — poll payment
+    // GET /api/bookings/{id}/payment-status
     // ─────────────────────────────────────────────────────────────────
     public function paymentStatus($id)
     {
@@ -269,19 +265,21 @@ class BookingController extends Controller
         }
 
         return response()->json([
-            'payment_status' => $booking->payment_status,
-            'mpesa_receipt'  => $booking->mpesa_receipt,
-            'amount'         => $booking->amount,
-            'paid_at'        => $booking->paid_at,
+            'payment_status'      => $booking->payment_status,
+            'payout_status'       => $booking->payout_status,
+            'mpesa_receipt'       => $booking->mpesa_receipt,
+            'amount'              => $booking->amount,
+            'platform_commission' => $booking->platform_commission,
+            'photographer_payout' => $booking->photographer_payout,
+            'paid_at'             => $booking->paid_at,
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // POST /api/bookings/mpesa/callback — Safaricom webhook (public)
+    // POST /api/bookings/mpesa/callback — Safaricom STK callback
     // ─────────────────────────────────────────────────────────────────
     public function mpesaCallback(Request $request)
     {
-        // Always respond 200 immediately
         response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted'])->send();
 
         $body = $request->input('Body.stkCallback');
@@ -300,11 +298,103 @@ class BookingController extends Controller
 
         $meta    = collect($body['CallbackMetadata']['Item'] ?? [])->pluck('Value', 'Name');
         $receipt = $meta->get('MpesaReceiptNumber');
+        $amount  = (float) ($meta->get('Amount') ?? $booking->amount);
 
+        // Mark as paid and calculate 90/10 split
         $booking->update([
             'payment_status' => Booking::PAYMENT_PAID,
             'mpesa_receipt'  => $receipt,
+            'amount'         => $amount,
             'paid_at'        => now(),
         ]);
+        $booking->calculateCommission($amount);
+
+        Log::info("Booking #{$booking->id} paid. Total: {$amount}. " .
+            "Commission: {$booking->platform_commission}. " .
+            "Photographer payout: {$booking->photographer_payout}");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // POST /api/bookings/payout/callback — B2C result callback
+    // ─────────────────────────────────────────────────────────────────
+    public function payoutCallback(Request $request)
+    {
+        response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted'])->send();
+
+        $result = $request->input('Result');
+        if (!$result) return;
+
+        $reference  = $result['ReferenceData']['ReferenceItem']['Value'] ?? '';
+        $resultCode = $result['ResultCode'] ?? 1;
+
+        // Extract booking ID from reference "PAYOUT-BK-{id}"
+        $bookingId = (int) str_replace('PAYOUT-BK-', '', $reference);
+        $booking   = Booking::find($bookingId);
+        if (!$booking) return;
+
+        if ($resultCode === 0) {
+            $params  = collect($result['ResultParameters']['ResultParameter'] ?? [])->pluck('Value', 'Key');
+            $receipt = $params->get('TransactionReceipt') ?? $params->get('TransactionID');
+
+            $booking->update([
+                'payout_status'  => Booking::PAYOUT_PAID,
+                'payout_receipt' => $receipt,
+                'payout_at'      => now(),
+            ]);
+            Log::info("Payout for booking #{$bookingId} confirmed. Receipt: {$receipt}");
+        } else {
+            $booking->update(['payout_status' => Booking::PAYOUT_FAILED]);
+            Log::warning("Payout for booking #{$bookingId} failed. Code: {$resultCode}");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // POST /api/bookings/payout/timeout — B2C timeout callback
+    // ─────────────────────────────────────────────────────────────────
+    public function payoutTimeout(Request $request)
+    {
+        response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted'])->send();
+        Log::warning('B2C payout timed out: ' . json_encode($request->all()));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Private: trigger B2C payout to photographer after booking complete
+    // ─────────────────────────────────────────────────────────────────
+    private function triggerPayout(Booking $booking): void
+    {
+        if (!$booking->isPaid()) return;
+        if ($booking->payout_status === Booking::PAYOUT_PAID) return;
+
+        $photographer = $booking->photographer;
+        $phone        = $photographer?->phoneNumber;
+        $payoutAmount = $booking->photographer_payout ?? round($booking->amount * 0.9, 2);
+
+        if (!$phone || !$payoutAmount) {
+            Log::warning("Cannot payout booking #{$booking->id}: missing phone or amount.");
+            $booking->update(['payout_status' => Booking::PAYOUT_FAILED]);
+            return;
+        }
+
+        $booking->update(['payout_status' => Booking::PAYOUT_PROCESSING]);
+
+        $result = $this->mpesaService->b2cPayout(
+            phone:     $phone,
+            amount:    $payoutAmount,
+            reference: 'PAYOUT-BK-' . $booking->id,
+            remarks:   "Pixxgram booking #{$booking->id} payout",
+        );
+
+        if (!$result['success']) {
+            Log::error("B2C payout failed for booking #{$booking->id}: " . $result['message']);
+            $booking->update([
+                'payout_status'    => Booking::PAYOUT_FAILED,
+                'payout_reference' => 'FAILED: ' . $result['message'],
+            ]);
+        } else {
+            $booking->update([
+                'payout_reference' => $result['conversation_id'] ?? null,
+            ]);
+            Log::info("B2C payout initiated for booking #{$booking->id}. Amount: {$payoutAmount}");
+        }
     }
 }

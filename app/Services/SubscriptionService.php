@@ -19,12 +19,12 @@ class SubscriptionService
         ],
         'quarterly' => [
             'label'  => 'Quarterly',
-            'amount' => 1800,
+            'amount' => 1300,
             'days'   => 90,
         ],
         'annual' => [
             'label'  => 'Annual',
-            'amount' => 5000,
+            'amount' => 5500,
             'days'   => 365,
         ],
     ];
