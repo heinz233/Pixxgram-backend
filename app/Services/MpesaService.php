@@ -59,7 +59,7 @@ class MpesaService
                     'PartyA'            => $phone,
                     'PartyB'            => $this->businessShortCode,
                     'PhoneNumber'       => $phone,
-                    'CallBackURL'       => route('bookings.mpesa.callback'),
+                    'CallBackURL'       => rtrim(config('app.url'), '/') . '/api/bookings/mpesa/callback',
                     'AccountReference'  => $reference,
                     'TransactionDesc'   => $description,
                 ]);
@@ -120,8 +120,8 @@ class MpesaService
                     'PartyA'             => $this->b2cShortCode,
                     'PartyB'             => $phone,
                     'Remarks'            => $remarks,
-                    'QueueTimeOutURL'    => route('bookings.payout.timeout'),
-                    'ResultURL'          => route('bookings.payout.callback'),
+                    'QueueTimeOutURL'    => rtrim(config('app.url'), '/') . '/api/bookings/payout/timeout',
+                    'ResultURL'          => rtrim(config('app.url'), '/') . '/api/bookings/payout/callback',
                     'Occasion'           => $reference,
                 ]);
 
