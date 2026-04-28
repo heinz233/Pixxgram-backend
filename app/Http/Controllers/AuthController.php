@@ -13,58 +13,39 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     public function register(Request $request)
-    {
-        $validated = $request->validate([
-            'name'        => 'required|string',
-            'email'       => 'required|email|unique:users,email',
-            'password'    => 'required|string|min:6|max:30',
-            'role_id'     => 'required|integer|exists:roles,id',
-            'phoneNumber' => 'nullable|string',
-            'gender'      => 'nullable|string',
-            'dob'         => 'nullable|date',
-            'gymLocation' => 'nullable|string',
-        ]);
+{
+    $validated = $request->validate([
+        'name'      => 'required|string|max:255',
+        'email'     => 'required|email|unique:users,email',
+        'password'  => 'required|string|min:6|max:30',
+        'role_id'   => 'required|integer|exists:roles,id',
+    ]);
 
-        // Handle profile image upload separately (cannot use mimes with nullable|string)
-        $filename = null;
-        if ($request->hasFile('user_image')) {
-            $filename = $request->file('user_image')->store('users', 'public');
-        }
+    $user = User::create([
+        'name'      => $validated['name'],
+        'email'     => $validated['email'],
+        'password'  => Hash::make($validated['password']),
+        'role_id'   => $validated['role_id'],
+        'is_active' => false, // ← back to false, wait for verification
+    ]);
 
-        try {
-            $user = User::create([
-                'name'        => $validated['name'],
-                'email'       => $validated['email'],
-                'password'    => Hash::make($validated['password']),
-                'role_id'     => $validated['role_id'],
-                'phoneNumber' => $validated['phoneNumber'] ?? null,
-                'gender'      => $validated['gender'] ?? null,
-                'dob'         => $validated['dob'] ?? null,
-                'gymLocation' => $validated['gymLocation'] ?? null,
-                'user_image'  => $filename,
-                'is_active'   => false, // activate on email verification
-            ]);
+    // Re-enable email sending ↓
+    $signedUrl = URL::temporarySignedRoute(
+        'verification.verify',
+        now()->addMinutes(60),
+        ['id' => $user->id, 'hash' => sha1($user->email)]
+    );
 
-            $signedUrl = URL::temporarySignedRoute(
-                'verification.verify',
-                now()->addMinutes(60),
-                ['id' => $user->id, 'hash' => sha1($user->email)]
-            );
+    $user->notify(new VerifyEmailNotification($signedUrl));
 
-            $user->notify(new VerifyEmailNotification($signedUrl));
+    $token = $user->createToken('auth-token')->plainTextToken;
 
-            return response()->json([
-                'message' => 'Registration successful. Please verify your email.',
-                'user'    => $user,
-            ], 201);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'error'   => 'Registration failed',
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-    }
+    return response()->json([
+        'message' => 'Registration successful! Please check your email to verify your account.',
+        'user'    => $user,
+        'token'   => $token,
+    ], 201);
+}
 
     public function login(Request $request)
     {

@@ -264,6 +264,30 @@ class BookingController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
+        // If still pending_payment, query Safaricom directly to check status
+        // This handles cases where the callback URL was unreachable (e.g. localhost dev)
+        if ($booking->payment_status === Booking::PAYMENT_PENDING_PAYMENT
+            && $booking->mpesa_checkout_request_id
+        ) {
+            $queryResult = $this->mpesaService->stkQuery($booking->mpesa_checkout_request_id);
+
+            if ($queryResult['success'] && $queryResult['paid']) {
+                // Payment confirmed directly from Safaricom — mark as paid
+                $amount = (float) ($booking->amount ?? 0);
+                $booking->update([
+                    'payment_status' => Booking::PAYMENT_PAID,
+                    'paid_at'        => now(),
+                ]);
+                if ($amount > 0) {
+                    $booking->calculateCommission($amount);
+                }
+                $booking->refresh();
+            } elseif ($queryResult['success'] && $queryResult['cancelled']) {
+                $booking->update(['payment_status' => Booking::PAYMENT_UNPAID]);
+                $booking->refresh();
+            }
+        }
+
         return response()->json([
             'payment_status'      => $booking->payment_status,
             'payout_status'       => $booking->payout_status,

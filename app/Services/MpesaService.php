@@ -178,4 +178,48 @@ class MpesaService
         if (!str_starts_with($phone, '254')) return '254' . $phone;
         return $phone;
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // STK Query — ask Safaricom directly if a payment succeeded
+    // Use this when callback URL is unreachable (e.g. localhost dev)
+    // ─────────────────────────────────────────────────────────────────
+    public function stkQuery(string $checkoutRequestId): array
+    {
+        $token = $this->getAccessToken();
+        if (!$token) {
+            return ['success' => false, 'message' => 'Could not obtain access token.'];
+        }
+
+        $timestamp = now()->format('YmdHis');
+        $password  = base64_encode($this->businessShortCode . $this->passkey . $timestamp);
+
+        try {
+            $response = Http::withToken($token)
+                ->timeout(15)
+                ->post("{$this->baseUrl}/mpesa/stkpushquery/v1/query", [
+                    'BusinessShortCode' => $this->businessShortCode,
+                    'Password'          => $password,
+                    'Timestamp'         => $timestamp,
+                    'CheckoutRequestID' => $checkoutRequestId,
+                ]);
+
+            $body = $response->json();
+
+            // ResultCode 0 = success, 1032 = cancelled, 1037 = timeout
+            $resultCode = $body['ResultCode'] ?? null;
+
+            return [
+                'success'      => true,
+                'result_code'  => $resultCode,
+                'paid'         => $resultCode === '0' || $resultCode === 0,
+                'cancelled'    => in_array($resultCode, ['1032', 1032]),
+                'description'  => $body['ResultDesc'] ?? $body['ResponseDescription'] ?? '',
+                'raw'          => $body,
+            ];
+
+        } catch (\Throwable $e) {
+            Log::error('STK query error: ' . $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
 }
