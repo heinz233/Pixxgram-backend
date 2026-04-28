@@ -267,6 +267,24 @@ class SubscriptionController extends Controller
             ->where('photographer_id', $user->id)
             ->firstOrFail();
 
+        // If still pending, query Safaricom directly
+        // This fixes the case where callback URL is unreachable (localhost dev)
+        if ($subscription->status === 'pending') {
+            $queryResult = $this->mpesaService->stkQuery($checkoutRequestId);
+
+            if ($queryResult['success'] && $queryResult['paid']) {
+                // Payment confirmed — activate the subscription
+                $this->subscriptionService->confirmPayment(
+                    $checkoutRequestId,
+                    'STK-QUERY-' . now()->format('YmdHis')
+                );
+                $subscription->refresh();
+            } elseif ($queryResult['success'] && $queryResult['cancelled']) {
+                $subscription->update(['status' => 'failed']);
+                $subscription->refresh();
+            }
+        }
+
         return response()->json([
             'status'        => $subscription->status,
             'mpesa_receipt' => $subscription->mpesa_receipt,
