@@ -28,7 +28,7 @@ Route::post('/login',    [AuthController::class, 'login']);
 // Email verification (signed URL — no token needed)
 Route::get('/email/verify/{id}/{hash}', [VerifyEmailController::class, 'verify'])
     ->middleware(['signed'])
-    ->name('verification.verify');
+    ->name('api.verification.verify');
 
     // STK callback (client payment)
     Route::post('/bookings/mpesa/callback',   [BookingController::class, 'mpesaCallback'])
