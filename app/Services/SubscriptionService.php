@@ -19,12 +19,12 @@ class SubscriptionService
         ],
         'quarterly' => [
             'label'  => 'Quarterly',
-            'amount' => 1300,
+            'amount' => 1800,
             'days'   => 90,
         ],
         'annual' => [
             'label'  => 'Annual',
-            'amount' => 5500,
+            'amount' => 5000,
             'days'   => 365,
         ],
     ];
@@ -52,7 +52,16 @@ class SubscriptionService
     // ─────────────────────────────────────────────────────────────────
     public function confirmPayment(string $checkoutRequestId, ?string $mpesaReceipt): bool
     {
+        // Find by transaction_reference (normal flow)
         $subscription = Subscription::where('transaction_reference', $checkoutRequestId)->first();
+
+        // Fallback: if transaction_reference was never saved (old bug),
+        // find the most recent pending subscription for any photographer
+        if (!$subscription) {
+            $subscription = Subscription::where('status', 'pending')
+                ->latest()
+                ->first();
+        }
 
         if (!$subscription) {
             Log::warning('SubscriptionService::confirmPayment — subscription not found', [

@@ -183,6 +183,11 @@ class SubscriptionController extends Controller
                 return response()->json(['error' => $stkResult['message']], 422);
             }
 
+            // CRITICAL: Save the checkout_request_id so confirmPayment() can find this row
+            $subscription->update([
+                'transaction_reference' => $stkResult['checkout_request_id'],
+            ]);
+
             return response()->json([
                 'message'             => 'M-Pesa prompt sent. Enter your PIN to complete payment.',
                 'subscription_id'     => $subscription->id,
@@ -263,17 +268,34 @@ class SubscriptionController extends Controller
         /** @var \App\Models\User $user */
         $user = Auth::user();
 
+        // Find by transaction_reference first
         $subscription = Subscription::where('transaction_reference', $checkoutRequestId)
             ->where('photographer_id', $user->id)
-            ->firstOrFail();
+            ->first();
+
+        // Fallback: find latest pending subscription for this photographer
+        // (handles case where transaction_reference was never saved)
+        if (!$subscription) {
+            $subscription = Subscription::where('photographer_id', $user->id)
+                ->where('status', 'pending')
+                ->latest()
+                ->first();
+
+            // Save the transaction_reference now so future polls work
+            if ($subscription) {
+                $subscription->update(['transaction_reference' => $checkoutRequestId]);
+            }
+        }
+
+        if (!$subscription) {
+            return response()->json(['status' => 'not_found'], 404);
+        }
 
         // If still pending, query Safaricom directly
-        // This fixes the case where callback URL is unreachable (localhost dev)
         if ($subscription->status === 'pending') {
             $queryResult = $this->mpesaService->stkQuery($checkoutRequestId);
 
             if ($queryResult['success'] && $queryResult['paid']) {
-                // Payment confirmed — activate the subscription
                 $this->subscriptionService->confirmPayment(
                     $checkoutRequestId,
                     'STK-QUERY-' . now()->format('YmdHis')
