@@ -62,7 +62,7 @@ Route::get('/locations',           [LocationController::class, 'index']);
 
     // Resend verification email
         Route::post('/email/verification-notification', [ResendEmailVerificationController::class, 'resend'])
-        ->name('verification.send');
+        ->name('api.verification.send');
 
     // ── Ratings ──────────────────────────────────────────────────────
         Route::get('/photographers/{id}/ratings', [RatingController::class, 'index']);
