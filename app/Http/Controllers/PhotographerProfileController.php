@@ -73,6 +73,28 @@ class PhotographerProfileController extends Controller
         return response()->json($photographer);
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // POST /api/photographers/{photographerId}/portfolio/{itemId}/view
+    // Record a portfolio item view — called when client opens lightbox
+    // ─────────────────────────────────────────────────────────────────
+    public function recordView($photographerId, $itemId)
+    {
+        $item = Portfolio::where('id', $itemId)
+            ->where('photographer_id', $photographerId)
+            ->first();
+
+        if (!$item) {
+            return response()->json(['message' => 'Portfolio item not found.'], 404);
+        }
+
+        // Use increment() to avoid race conditions
+        $item->increment('views');
+
+        return response()->json([
+            'views' => $item->fresh()->views,
+        ]);
+    }
+
     // PUT /api/photographer/profile  (photographer only)
     // POST /api/photographer/profile  (for multipart FormData support)
     public function updateProfile(Request $request)

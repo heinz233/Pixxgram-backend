@@ -11,7 +11,6 @@ use App\Http\Controllers\RatingController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\AdminController;
-use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ResendEmailVerificationController;
 use App\Http\Controllers\VerifyEmailController;
 
@@ -19,9 +18,6 @@ use App\Http\Controllers\VerifyEmailController;
 // PUBLIC ROUTES (no auth required)
 // ─────────────────────────────────────────────────────────────────────
 
-
-Route::delete('/photographer/portfolio/{id}', [PhotographerProfileController::class, 'deletePortfolioItem']);
-Route::get('/photographer/portfolio', [PhotographerProfileController::class, 'getPortfolio']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login',    [AuthController::class, 'login']);
 
@@ -30,19 +26,9 @@ Route::get('/email/verify/{id}/{hash}', [VerifyEmailController::class, 'verify']
     ->middleware(['signed'])
     ->name('verification.verify');
 
-    // STK callback (client payment)
-    Route::post('/bookings/mpesa/callback',   [BookingController::class, 'mpesaCallback'])
-        ->name('bookings.mpesa.callback');
-
-    // B2C callbacks (photographer payout)
-    Route::post('/bookings/payout/callback',  [BookingController::class, 'payoutCallback'])
-        ->name('bookings.payout.callback');
-    Route::post('/bookings/payout/timeout',   [BookingController::class, 'payoutTimeout'])
-        ->name('bookings.payout.timeout');
-
-    // M-Pesa callback — Safaricom calls this, no auth
-    Route::post('/subscriptions/mpesa/callback', [SubscriptionController::class, 'mpesaCallback'])
-        ->name('subscriptions.mpesa.callback');
+// M-Pesa callback — Safaricom calls this, no auth
+Route::post('/subscriptions/mpesa/callback', [SubscriptionController::class, 'mpesaCallback'])
+    ->name('subscriptions.mpesa.callback');
 
 // Public listing
 Route::get('/subscriptions/plans', [SubscriptionController::class, 'plans']);
@@ -55,29 +41,30 @@ Route::get('/locations',           [LocationController::class, 'index']);
 // AUTHENTICATED ROUTES
 // ─────────────────────────────────────────────────────────────────────
 
-        Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth:sanctum')->group(function () {
 
-        Route::post('/logout', [AuthController::class, 'logout']);
-        Route::get('/user',    [AuthController::class, 'userInfo']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/user',    [AuthController::class, 'userInfo']);
 
     // Resend verification email
-        Route::post('/email/verification-notification', [ResendEmailVerificationController::class, 'resend'])
+    Route::post('/email/verification-notification', [ResendEmailVerificationController::class, 'resend'])
         ->name('verification.send');
 
     // ── Ratings ──────────────────────────────────────────────────────
-        Route::get('/photographers/{id}/ratings', [RatingController::class, 'index']);
-        Route::post('/photographers/{id}/rate',   [RatingController::class, 'store']);
+    Route::get('/photographers/{id}/ratings', [RatingController::class, 'index']);
+    Route::post('/photographers/{id}/rate',   [RatingController::class, 'store']);
+    // Portfolio view tracking — public so any visitor counts
+    Route::post('/photographers/{photographerId}/portfolio/{itemId}/view',
+        [PhotographerProfileController::class, 'recordView']);
 
     // ── Bookings ─────────────────────────────────────────────────────
-        Route::get('/bookings',                    [BookingController::class, 'getBookings']);
-        Route::get('/bookings/{id}',               [BookingController::class, 'show']);
-        Route::post('/bookings',                   [BookingController::class, 'store']);
-        Route::patch('/bookings/{id}/status',      [BookingController::class, 'updateStatus']);
-        Route::post('/bookings/{id}/pay',          [BookingController::class, 'initiatePayment']);
-        Route::get('/bookings/{id}/payment-status',[BookingController::class, 'paymentStatus']);
+    Route::get('/bookings',               [BookingController::class, 'getBookings']);
+    Route::get('/bookings/{id}',          [BookingController::class, 'show']);
+    Route::post('/bookings',              [BookingController::class, 'store']);
+    Route::patch('/bookings/{id}/status', [BookingController::class, 'updateStatus']);
 
     // ── Messages ─────────────────────────────────────────────────────
-        Route::prefix('messages')->group(function () {
+    Route::prefix('messages')->group(function () {
         Route::get('/conversations',          [MessageController::class, 'getConversations']);
         Route::get('/conversations/{userId}', [MessageController::class, 'getConversation']);
         Route::post('/send',                  [MessageController::class, 'sendMessage']);
@@ -87,7 +74,7 @@ Route::get('/locations',           [LocationController::class, 'index']);
     });
 
     // ── Subscriptions ─────────────────────────────────────────────────
-        Route::prefix('subscriptions')->group(function () {
+    Route::prefix('subscriptions')->group(function () {
         Route::get('/current',                          [SubscriptionController::class, 'current']);
         Route::get('/history',                          [SubscriptionController::class, 'history']);
         Route::post('/subscribe',                       [SubscriptionController::class, 'subscribe']);
@@ -95,23 +82,18 @@ Route::get('/locations',           [LocationController::class, 'index']);
         Route::get('/mpesa/status/{checkoutRequestId}', [SubscriptionController::class, 'mpesaStatus']);
     });
 
-    //Reports
-        Route::post('/photographers/{id}/report', [ReportController::class, 'store']);
-        Route::get('/my-reports', [ReportController::class, 'myReports']);
-
     // ── Profile update (client) ───────────────────────────────────────
-        Route::put('/photographer/profile',  [PhotographerProfileController::class, 'updateProfile']);
-        Route::post('/photographer/profile', [PhotographerProfileController::class, 'updateProfile']);
+    Route::post('/profile',   [AuthController::class, 'updateProfile']);
+    Route::put('/password',   [AuthController::class, 'changePassword']);
 
     // ─────────────────────────────────────────────────────────────────
     // PHOTOGRAPHER ROUTES
     // No role middleware here — we check inside the controller instead
     // to avoid the RoleMiddleware token-loading issue
     // ─────────────────────────────────────────────────────────────────
-     Route::get('/photographer/dashboard',   [PhotographerProfileController::class, 'getDashboard']);
-     Route::put('/photographer/profile',  [PhotographerProfileController::class, 'updateProfile']);
-     Route::post('/photographer/profile', [PhotographerProfileController::class, 'updateProfile']); // ← add this
-     Route::post('/photographer/portfolio',  [PhotographerProfileController::class, 'uploadPortfolio']);
+    Route::get('/photographer/dashboard',   [PhotographerProfileController::class, 'getDashboard']);
+    Route::put('/photographer/profile',     [PhotographerProfileController::class, 'updateProfile']);
+    Route::post('/photographer/portfolio',  [PhotographerProfileController::class, 'uploadPortfolio']);
 
     // ─────────────────────────────────────────────────────────────────
     // ADMIN ROUTES
